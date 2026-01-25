@@ -1,4 +1,4 @@
-import { google } from '@ai-sdk/google';
+import { groq } from '@ai-sdk/groq';
 import { streamText, type UIMessage } from 'ai';
 import { getSession } from '@/lib/auth';
 
@@ -41,11 +41,11 @@ const HEALTH_ASSISTANT_SYSTEM_PROMPT = `You are Pluto, an intelligent AI health 
 Remember: Your goal is to improve health awareness and help users make informed decisions about their health, while always encouraging professional medical consultation when needed.`;
 
 export async function POST(req: Request) {
-  // Check authentication
-  const session = await getSession();
-  if (!session) {
-    return new Response('Unauthorized', { status: 401 });
-  }
+  // Authentication is optional - chat works for everyone
+  // const session = await getSession();
+  // if (!session) {
+  //   return new Response('Unauthorized', { status: 401 });
+  // }
 
   const { messages }: { messages: UIMessage[] } = await req.json();
 
@@ -75,12 +75,11 @@ export async function POST(req: Request) {
   });
 
   const result = streamText({
-    model: google('gemini-3-flash-preview'),
+    model: groq('llama-3.3-70b-versatile'),
     system: HEALTH_ASSISTANT_SYSTEM_PROMPT,
     messages: coreMessages as any, // Cast to any to avoid type strictness for now
     abortSignal: req.signal,
   });
 
-  // Adapted to match the existing SDK version capabilities as per lint feedback
-  return result.toDataStreamResponse ? result.toDataStreamResponse() : (result as any).toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse();
 }
