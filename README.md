@@ -1,7 +1,3 @@
-Here is a high-quality, GitHub-ready README for your project Pluto — Health Agent. This is written to look serious, professional, and startup-level.
-
-⸻
-
 Pluto — AI Health Assistant 🧠💊
 
 Pluto is an AI-powered health assistant that analyzes user-provided symptoms and health-related inputs to generate preliminary health insights and structured assessments. It leverages machine learning and large language models (LLMs) to improve health awareness and support early decision-making — without replacing professional medical advice.
@@ -96,15 +92,4 @@ This project is licensed under the MIT License.
 
 Dev Rajyaguru
 AI Engineer | Health Tech Innovator
-GitHub: https://github.com/devrajyaguru03
-
-⸻
-
-If you want, I can upgrade this README to:
-	•	Ultra-premium startup-grade README
-	•	Add screenshots, diagrams, badges, roadmap
-	•	Write a killer project description for recruiters
-	•	Make it look like a funding-ready AI product
-	•	Brutally optimize it to make your GitHub look top-tier
-
-Say the word — I’ll level it up.
+GitHub: https://github.com/devrajyaguru03.
