@@ -1,0 +1,23 @@
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #0ea5e9; }
+      .planet { fill: #0284c7; }
+      .ring { fill: #38bdf8; }
+      .ecg { stroke: #ffffff; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0ea5e9; }
+      .planet { fill: #0284c7; }
+      .ring { fill: #38bdf8; }
+      .ecg { stroke: #ffffff; }
+    }
+  </style>
+  <rect class="bg" width="180" height="180" rx="37"/>
+  <!-- Planet body -->
+  <circle class="planet" cx="90" cy="90" r="45"/>
+  <!-- Planet ring -->
+  <ellipse class="ring" cx="90" cy="90" rx="65" ry="18" transform="rotate(-15 90 90)" fill="none" stroke-width="6" stroke="#38bdf8"/>
+  <!-- ECG line across -->
+  <path class="ecg" d="M20 90 L55 90 L65 60 L75 120 L85 70 L95 110 L105 90 L160 90" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
