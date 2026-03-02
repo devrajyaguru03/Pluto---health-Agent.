@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { clearAuthCookie } from '@/lib/auth';
 
-export async function POST() {
-    const cookieStore = await cookies();
-    cookieStore.delete('auth_token');
+async function handler() {
+    await clearAuthCookie();
     return NextResponse.json({ success: true });
 }
+
+// Support both POST (fetch) and GET (browser redirect)
+export const POST = handler;
+export const GET = handler;

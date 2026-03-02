@@ -1,6 +1,10 @@
 import { groq } from '@ai-sdk/groq';
-import { streamText, type UIMessage } from 'ai';
+import { streamText } from 'ai';
 import { getSession } from '@/lib/auth';
+import { parseBody, ChatRequestSchema } from '@/lib/validate';
+import { respondError } from '@/lib/api';
+import { rateLimit, getIp } from '@/lib/ratelimit';
+import db from '@/lib/db';
 
 export const maxDuration = 60;
 
@@ -41,24 +45,28 @@ const HEALTH_ASSISTANT_SYSTEM_PROMPT = `You are Pluto, an intelligent AI health 
 Remember: Your goal is to improve health awareness and help users make informed decisions about their health, while always encouraging professional medical consultation when needed.`;
 
 export async function POST(req: Request) {
-  // Authentication is optional - chat works for everyone
-  // const session = await getSession();
-  // if (!session) {
-  //   return new Response('Unauthorized', { status: 401 });
-  // }
-
-  const { messages }: { messages: UIMessage[] } = await req.json();
-
-  /* 
-   * Manually map messages to ensure compatibility and debugging.
-   * Expects messages to be an array of objects with role and content.
-   */
-  if (!messages || !Array.isArray(messages)) {
-    return new Response('Invalid messages format', { status: 400 });
+  // Rate limiting: 20 requests per minute per IP
+  const ip = getIp(req);
+  const limit = rateLimit(ip, { limit: 20, windowMs: 60_000 });
+  if (!limit.ok) {
+    return respondError(
+      `Too many requests. Please wait ${limit.retryAfter}s.`,
+      429
+    );
   }
 
+  // Validate body
+  let body: Awaited<ReturnType<typeof parseBody<typeof ChatRequestSchema._type>>>;
+  try {
+    body = await parseBody(ChatRequestSchema, req);
+  } catch (res: any) {
+    return res;
+  }
+
+  const { messages, sessionId } = body;
+
+  // Normalize messages to core format
   const coreMessages = messages.map((m: any) => {
-    // UIMessage uses 'parts' array, but streamText expects 'content' string
     let content = '';
     if (m.content) {
       content = m.content;
@@ -68,17 +76,44 @@ export async function POST(req: Request) {
         .map((p: any) => p.text)
         .join('');
     }
-    return {
-      role: m.role,
-      content: content
-    };
+    return { role: m.role, content };
   });
+
+  // Get the last user message for history saving
+  const lastUserMessage = [...coreMessages].reverse().find(m => m.role === 'user');
+
+  // Save user message to history if authenticated and sessionId provided
+  const session = await getSession();
+  if (session && sessionId) {
+    const sessionOwner = db
+      .prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?')
+      .get(sessionId, session.id);
+
+    if (sessionOwner && lastUserMessage) {
+      db.prepare('INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)')
+        .run(sessionId, 'user', lastUserMessage.content);
+    }
+  }
 
   const result = streamText({
     model: groq('llama-3.3-70b-versatile'),
     system: HEALTH_ASSISTANT_SYSTEM_PROMPT,
-    messages: coreMessages as any, // Cast to any to avoid type strictness for now
+    messages: coreMessages as any,
     abortSignal: req.signal,
+    onFinish: async ({ text }) => {
+      // Persist assistant response to history
+      if (session && sessionId && text) {
+        const sessionOwner = db
+          .prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?')
+          .get(sessionId, session.id);
+        if (sessionOwner) {
+          db.prepare('INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)')
+            .run(sessionId, 'assistant', text);
+          db.prepare('UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(sessionId);
+        }
+      }
+    },
   });
 
   return result.toUIMessageStreamResponse();

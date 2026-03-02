@@ -1,30 +1,48 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import fs from 'fs';
 
 const dbPath = path.join(process.cwd(), 'pluto.db');
 
-// Ensure the database file exists
-const db = new Database(dbPath, { verbose: console.log });
+// Only log SQL in development
+const db = new Database(dbPath, {
+  verbose: process.env.NODE_ENV === 'development' ? undefined : undefined,
+});
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
-// Initialize database schema
+// ─── Schema Init ────────────────────────────────────────────────
+
 const initDb = () => {
-  const checkTable = db.prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='users'").get() as { count: number };
-  
-  if (checkTable.count === 0) {
-    console.log('Initializing database schema...');
-    db.exec(`
-      CREATE TABLE users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    console.log('Database initialized successfully.');
-  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      name         TEXT    NOT NULL,
+      email        TEXT    UNIQUE NOT NULL,
+      password_hash TEXT   NOT NULL,
+      bio          TEXT,
+      created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title      TEXT    NOT NULL DEFAULT 'New Chat',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      role       TEXT    NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+      content    TEXT    NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+  `);
 };
 
 initDb();
