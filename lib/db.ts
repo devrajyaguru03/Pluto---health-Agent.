@@ -1,21 +1,33 @@
-import { createClient } from '@libsql/client';
+import { createClient, type Client } from '@libsql/client';
 
-const url = process.env.TURSO_DATABASE_URL;
-const authToken = process.env.TURSO_AUTH_TOKEN;
+let _db: Client | null = null;
 
-if (!url) {
-  throw new Error('TURSO_DATABASE_URL environment variable is required');
+export function getDb(): Client {
+  if (!_db) {
+    const url = process.env.TURSO_DATABASE_URL;
+    const authToken = process.env.TURSO_AUTH_TOKEN;
+
+    if (!url) {
+      throw new Error('TURSO_DATABASE_URL environment variable is required');
+    }
+
+    _db = createClient({ url, authToken });
+  }
+  return _db;
 }
 
-export const db = createClient({
-  url,
-  authToken,
-});
+// Convenience shorthand — same API as before
+export const db = {
+  execute: (...args: Parameters<Client['execute']>) => getDb().execute(...args),
+  executeMultiple: (...args: Parameters<Client['executeMultiple']>) => getDb().executeMultiple(...args),
+  batch: (...args: Parameters<Client['batch']>) => getDb().batch(...args),
+};
 
 // ─── Schema Init ────────────────────────────────────────────────
 
 export async function initDb() {
-  await db.executeMultiple(`
+  const client = getDb();
+  await client.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       name         TEXT    NOT NULL,
