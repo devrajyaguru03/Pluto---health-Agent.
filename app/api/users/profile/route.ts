@@ -1,5 +1,5 @@
 import { getSession } from '@/lib/auth';
-import db from '@/lib/db';
+import { db } from '@/lib/db';
 import { parseBody, UpdateProfileSchema } from '@/lib/validate';
 import { respond, respondError, withErrorHandler } from '@/lib/api';
 
@@ -8,9 +8,11 @@ export async function GET() {
     const session = await getSession();
     if (!session) return respondError('Unauthorized', 401);
 
-    const user = db
-        .prepare('SELECT id, name, email, bio, created_at, updated_at FROM users WHERE id = ?')
-        .get(session.id) as any;
+    const result = await db.execute({
+        sql: 'SELECT id, name, email, bio, created_at, updated_at FROM users WHERE id = ?',
+        args: [session.id],
+    });
+    const user = result.rows[0] as any;
 
     if (!user) return respondError('User not found', 404);
 
@@ -35,10 +37,11 @@ export const PATCH = withErrorHandler(async (req: Request) => {
 
     // Check email uniqueness if changing email
     if (data.email) {
-        const existing = db
-            .prepare('SELECT id FROM users WHERE email = ? AND id != ?')
-            .get(data.email, session.id);
-        if (existing) {
+        const existing = await db.execute({
+            sql: 'SELECT id FROM users WHERE email = ? AND id != ?',
+            args: [data.email, session.id],
+        });
+        if (existing.rows.length > 0) {
             return respondError('Email is already taken by another account', 409);
         }
     }
@@ -52,20 +55,25 @@ export const PATCH = withErrorHandler(async (req: Request) => {
     fields.push('updated_at = CURRENT_TIMESTAMP');
     values.push(session.id);
 
-    db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    await db.execute({
+        sql: `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+        args: values,
+    });
 
-    const updated = db
-        .prepare('SELECT id, name, email, bio, created_at, updated_at FROM users WHERE id = ?')
-        .get(session.id) as any;
+    const updated = await db.execute({
+        sql: 'SELECT id, name, email, bio, created_at, updated_at FROM users WHERE id = ?',
+        args: [session.id],
+    });
+    const user = updated.rows[0] as any;
 
     return respond({
         user: {
-            id: updated.id,
-            name: updated.name,
-            email: updated.email,
-            bio: updated.bio ?? null,
-            createdAt: updated.created_at,
-            updatedAt: updated.updated_at,
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            bio: user.bio ?? null,
+            createdAt: user.created_at,
+            updatedAt: user.updated_at,
         },
     });
 });

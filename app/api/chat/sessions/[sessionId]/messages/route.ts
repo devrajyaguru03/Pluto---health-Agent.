@@ -1,5 +1,5 @@
 import { getSession } from '@/lib/auth';
-import db from '@/lib/db';
+import { db } from '@/lib/db';
 import { parseBody } from '@/lib/validate';
 import { respond, respondError, withErrorHandler } from '@/lib/api';
 import { z } from 'zod';
@@ -22,25 +22,29 @@ export const POST = withErrorHandler(async (req: Request, { params }: Params) =>
     const id = parseInt(sessionId, 10);
     if (isNaN(id)) return respondError('Invalid session ID', 400);
 
-    const chatSession = db
-        .prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?')
-        .get(id, session.id);
-    if (!chatSession) return respondError('Session not found', 404);
+    const sessionResult = await db.execute({
+        sql: 'SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?',
+        args: [id, session.id],
+    });
+    if (sessionResult.rows.length === 0) return respondError('Session not found', 404);
 
     const { userMessage, assistantMessage } = await parseBody(AppendMessagesSchema, req);
 
-    const insertMessage = db.prepare(
-        'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)'
-    );
-
-    // Insert both in a transaction
-    const insertPair = db.transaction(() => {
-        insertMessage.run(id, 'user', userMessage);
-        insertMessage.run(id, 'assistant', assistantMessage);
-        db.prepare('UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
-    });
-
-    insertPair();
+    // Insert both messages and update session timestamp
+    await db.batch([
+        {
+            sql: 'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)',
+            args: [id, 'user', userMessage],
+        },
+        {
+            sql: 'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)',
+            args: [id, 'assistant', assistantMessage],
+        },
+        {
+            sql: 'UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            args: [id],
+        },
+    ]);
 
     return respond({ success: true }, 201);
 });

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import db from '@/lib/db';
+import { db } from '@/lib/db';
 import { respondError } from '@/lib/api';
 
 export async function GET() {
@@ -11,9 +11,11 @@ export async function GET() {
     }
 
     // Return live data from DB instead of stale JWT payload
-    const user = db
-        .prepare('SELECT id, name, email, bio, created_at, updated_at FROM users WHERE id = ?')
-        .get(session.id) as any;
+    const result = await db.execute({
+        sql: 'SELECT id, name, email, bio, created_at, updated_at FROM users WHERE id = ?',
+        args: [session.id],
+    });
+    const user = result.rows[0] as any;
 
     if (!user) {
         return respondError('User not found', 404);

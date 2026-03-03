@@ -1,19 +1,21 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { createClient } from '@libsql/client';
 
-const dbPath = path.join(process.cwd(), 'pluto.db');
+const url = process.env.TURSO_DATABASE_URL;
+const authToken = process.env.TURSO_AUTH_TOKEN;
 
-// Only log SQL in development
-const db = new Database(dbPath, {
-  verbose: process.env.NODE_ENV === 'development' ? undefined : undefined,
+if (!url) {
+  throw new Error('TURSO_DATABASE_URL environment variable is required');
+}
+
+export const db = createClient({
+  url,
+  authToken,
 });
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
 
 // ─── Schema Init ────────────────────────────────────────────────
 
-const initDb = () => {
-  db.exec(`
+export async function initDb() {
+  await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       name         TEXT    NOT NULL,
@@ -43,22 +45,4 @@ const initDb = () => {
     CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
   `);
-
-  // ── Migrate existing users table to add new columns if missing ──
-  const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
-  const colNames = userCols.map(c => c.name);
-  if (!colNames.includes('bio')) {
-    db.exec('ALTER TABLE users ADD COLUMN bio TEXT');
-  }
-  if (!colNames.includes('updated_at')) {
-    // SQLite doesn't allow non-constant defaults in ALTER TABLE,
-    // so add column without default then backfill existing rows.
-    db.exec('ALTER TABLE users ADD COLUMN updated_at DATETIME');
-    db.exec("UPDATE users SET updated_at = created_at WHERE updated_at IS NULL");
-  }
-
-};
-
-initDb();
-
-export default db;
+}

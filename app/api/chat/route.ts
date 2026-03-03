@@ -4,7 +4,7 @@ import { getSession } from '@/lib/auth';
 import { parseBody, ChatRequestSchema } from '@/lib/validate';
 import { respondError } from '@/lib/api';
 import { rateLimit, getIp } from '@/lib/ratelimit';
-import db from '@/lib/db';
+import { db } from '@/lib/db';
 
 export const maxDuration = 60;
 
@@ -85,13 +85,16 @@ export async function POST(req: Request) {
   // Save user message to history if authenticated and sessionId provided
   const session = await getSession();
   if (session && sessionId) {
-    const sessionOwner = db
-      .prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?')
-      .get(sessionId, session.id);
+    const ownerResult = await db.execute({
+      sql: 'SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?',
+      args: [sessionId, session.id],
+    });
 
-    if (sessionOwner && lastUserMessage) {
-      db.prepare('INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)')
-        .run(sessionId, 'user', lastUserMessage.content);
+    if (ownerResult.rows.length > 0 && lastUserMessage) {
+      await db.execute({
+        sql: 'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)',
+        args: [sessionId, 'user', lastUserMessage.content],
+      });
     }
   }
 
@@ -103,14 +106,19 @@ export async function POST(req: Request) {
     onFinish: async ({ text }) => {
       // Persist assistant response to history
       if (session && sessionId && text) {
-        const sessionOwner = db
-          .prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?')
-          .get(sessionId, session.id);
-        if (sessionOwner) {
-          db.prepare('INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)')
-            .run(sessionId, 'assistant', text);
-          db.prepare('UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .run(sessionId);
+        const ownerResult = await db.execute({
+          sql: 'SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?',
+          args: [sessionId, session.id],
+        });
+        if (ownerResult.rows.length > 0) {
+          await db.execute({
+            sql: 'INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)',
+            args: [sessionId, 'assistant', text],
+          });
+          await db.execute({
+            sql: 'UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            args: [sessionId],
+          });
         }
       }
     },
