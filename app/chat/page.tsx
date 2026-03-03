@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
 import {
   Send, User, Bot, Stethoscope, Thermometer, Heart, Brain,
   Pill, AlertTriangle, Menu, X, Plus, MessageSquare, LogOut, History,
-  Trash2,
+  Trash2, Paperclip, FileText, ImageIcon,
 } from "lucide-react"
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -35,6 +35,13 @@ interface HistoryMessage {
   created_at: string
 }
 
+interface AttachedFile {
+  name: string
+  type: string       // MIME type
+  dataUrl: string    // base64 data URL
+  preview?: string   // For images: same as dataUrl, for PDFs: null
+}
+
 // ─── Prompts ─────────────────────────────────────────────────────
 
 const QUICK_PROMPTS = [
@@ -53,6 +60,7 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Auth & session state
   const [user, setUser] = useState<UserInfo | null>(null)
@@ -61,6 +69,10 @@ export default function ChatPage() {
   const [historyMessages, setHistoryMessages] = useState<HistoryMessage[] | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+
+  // File attachment state
+  const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
 
   // ─── Fetch user on mount ───────────────────────────────────────
 
@@ -84,12 +96,11 @@ export default function ChatPage() {
 
   useEffect(() => { refreshSessions() }, [refreshSessions])
 
-  // ─── Live chat (new session) ───────────────────────────────────
+  // ─── Live chat ─────────────────────────────────────────────────
 
   const { messages, sendMessage, status, setMessages } = useChat({
     transport: new DefaultChatTransport({ api: "/api/chat" }),
     onFinish: async ({ message }) => {
-      // After AI responds, save the pair and refresh sidebar
       if (user && currentSessionId) {
         const lastUser = [...messages].reverse().find(m => m.role === "user")
         const userContent = lastUser?.parts
@@ -123,7 +134,51 @@ export default function ChatPage() {
     if (ta) { ta.style.height = "auto"; ta.style.height = `${Math.min(ta.scrollHeight, 150)}px` }
   }, [input])
 
-  // ─── Start a new chat session ──────────────────────────────────
+  // ─── File Handling ─────────────────────────────────────────────
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setFileError(null)
+
+    // Validate type
+    const isImage = file.type.startsWith("image/")
+    const isPdf = file.type === "application/pdf"
+
+    if (!isImage && !isPdf) {
+      setFileError("Only images (JPG, PNG, WEBP) and PDF files are supported.")
+      e.target.value = ""
+      return
+    }
+
+    // Validate size: 4MB max for base64
+    if (file.size > 4 * 1024 * 1024) {
+      setFileError("File is too large. Maximum size is 4MB.")
+      e.target.value = ""
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string
+      setAttachedFile({
+        name: file.name,
+        type: file.type,
+        dataUrl,
+        preview: isImage ? dataUrl : undefined,
+      })
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ""
+  }
+
+  const removeAttachment = () => {
+    setAttachedFile(null)
+    setFileError(null)
+  }
+
+  // ─── Session helpers ───────────────────────────────────────────
 
   const createSession = useCallback(async (firstMessage: string): Promise<number | null> => {
     if (!user) return null
@@ -143,32 +198,54 @@ export default function ChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || isLoading) return
     const text = input.trim()
+    if ((!text && !attachedFile) || isLoading) return
 
-    // If authenticated and no session yet, create one
+    // Create session if needed
     if (user && !currentSessionId && historyMessages === null) {
-      const id = await createSession(text)
-      if (id) {
-        setCurrentSessionId(id)
-        await refreshSessions()
+      const label = text || (attachedFile ? `[File: ${attachedFile.name}]` : "New chat")
+      const id = await createSession(label)
+      if (id) { setCurrentSessionId(id); await refreshSessions() }
+    }
+
+    const parts: any[] = []
+
+    // Add image/file part FIRST for clarity
+    if (attachedFile) {
+      if (attachedFile.type.startsWith("image/")) {
+        parts.push({ type: "image", data: attachedFile.dataUrl })
+      } else {
+        // PDF: extract via base64 text hint
+        parts.push({
+          type: "image",
+          data: attachedFile.dataUrl,
+        })
       }
     }
 
+    // Add the text part
+    parts.push({
+      type: "text",
+      text: text || (attachedFile ? `Please analyze this ${attachedFile.type.startsWith("image/") ? "image" : "document"} and provide health insights.` : ""),
+    })
+
     setInput("")
-    setHistoryMessages(null) // Back to live mode
-    sendMessage({ text })
+    setAttachedFile(null)
+    setHistoryMessages(null)
+
+    sendMessage({
+      text: text || `[Analyzing ${attachedFile?.name}]`,
+      parts,
+    } as any)
   }
 
   const handleQuickPrompt = async (prompt: string) => {
     if (isLoading) return
     setSidebarOpen(false)
-
     if (user && !currentSessionId) {
       const id = await createSession(prompt)
       if (id) { setCurrentSessionId(id); await refreshSessions() }
     }
-
     setHistoryMessages(null)
     sendMessage({ text: prompt })
   }
@@ -179,8 +256,7 @@ export default function ChatPage() {
     setLoadingHistory(true)
     setSidebarOpen(false)
     setCurrentSessionId(session.id)
-    setMessages([]) // clear live messages
-
+    setMessages([])
     try {
       const r = await fetch(`/api/chat/sessions/${session.id}`)
       const d = await r.json()
@@ -192,17 +268,14 @@ export default function ChatPage() {
     }
   }
 
-  // ─── Start a brand new chat ───────────────────────────────────
-
   const startNewChat = () => {
     setCurrentSessionId(null)
     setHistoryMessages(null)
     setMessages([])
     setInput("")
+    setAttachedFile(null)
     setSidebarOpen(false)
   }
-
-  // ─── Delete a session ─────────────────────────────────────────
 
   const deleteSession = async (id: number, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -216,8 +289,6 @@ export default function ChatPage() {
     }
   }
 
-  // ─── Logout ───────────────────────────────────────────────────
-
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" })
     setUser(null)
@@ -225,7 +296,7 @@ export default function ChatPage() {
     startNewChat()
   }
 
-  // ─── Render messages (history or live) ───────────────────────
+  // ─── Render messages ──────────────────────────────────────────
 
   const renderMessages = () => {
     if (loadingHistory) {
@@ -240,7 +311,6 @@ export default function ChatPage() {
       )
     }
 
-    // Show past session
     if (historyMessages !== null) {
       return (
         <div className="max-w-3xl mx-auto py-4">
@@ -259,12 +329,8 @@ export default function ChatPage() {
               </div>
             </div>
           ))}
-          {/* Continue chat button */}
           <div className="flex justify-center py-4">
-            <Button variant="outline" size="sm" onClick={() => {
-              setHistoryMessages(null)
-              setMessages([])
-            }} className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setHistoryMessages(null); setMessages([]) }} className="gap-2">
               <Send className="h-3 w-3" /> Continue this conversation
             </Button>
           </div>
@@ -273,7 +339,6 @@ export default function ChatPage() {
       )
     }
 
-    // Show empty state or live messages
     if (messages.length === 0) {
       return (
         <div className="h-full flex flex-col items-center justify-center p-8 text-center">
@@ -283,10 +348,14 @@ export default function ChatPage() {
           <h2 className="text-2xl font-bold text-foreground mb-2">
             {user ? `Welcome back, ${user.name.split(" ")[0]}!` : "Welcome to Pluto"}
           </h2>
-          <p className="text-muted-foreground max-w-md mb-8">
+          <p className="text-muted-foreground max-w-md mb-2">
             {user
               ? "Your conversations are saved. Start a new health query below."
               : "I'm your AI health assistant. Describe your symptoms or ask any health-related questions."}
+          </p>
+          <p className="text-xs text-muted-foreground max-w-md mb-8 flex items-center gap-1.5">
+            <Paperclip className="h-3 w-3" />
+            You can also attach blood reports, X-rays, or photos of body parts for AI analysis
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
             {QUICK_PROMPTS.slice(0, 4).map((item, index) => (
@@ -316,6 +385,25 @@ export default function ChatPage() {
                   if (part.type === "text") {
                     return <div key={index} className="whitespace-pre-wrap leading-relaxed">{part.text}</div>
                   }
+                  // Show image preview in chat
+                  if (part.type === "image" && part.data) {
+                    return (
+                      <div key={index} className="mt-2 mb-2">
+                        {part.data.startsWith("data:image/") ? (
+                          <img
+                            src={part.data}
+                            alt="Attached image"
+                            className="max-w-xs max-h-64 rounded-lg border border-border object-contain"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted rounded-lg px-3 py-2 w-fit">
+                            <FileText className="h-4 w-4" />
+                            <span>Document attached</span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
                   return null
                 })}
               </div>
@@ -335,7 +423,11 @@ export default function ChatPage() {
                   <span className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "150ms" }} />
                   <span className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "300ms" }} />
                 </div>
-                <span className="text-sm text-muted-foreground">Analyzing your health query...</span>
+                <span className="text-sm text-muted-foreground">
+                  {messages.some((m: any) => m.parts?.some((p: any) => p.type === "image"))
+                    ? "Analyzing your report/image..."
+                    : "Analyzing your health query..."}
+                </span>
               </div>
             </div>
           </div>
@@ -359,7 +451,6 @@ export default function ChatPage() {
         "fixed lg:static inset-y-0 left-0 z-50 w-72 bg-card border-r border-border flex flex-col transform transition-transform duration-300 ease-in-out lg:transform-none",
         sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
-        {/* Sidebar header */}
         <div className="p-4 border-b border-border flex items-center justify-between">
           <Link href="/"><PlutoLogo size="sm" /></Link>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-muted-foreground hover:text-foreground">
@@ -368,7 +459,6 @@ export default function ChatPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
-          {/* New Chat button */}
           <button
             onClick={startNewChat}
             className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors"
@@ -377,7 +467,6 @@ export default function ChatPage() {
             New Chat
           </button>
 
-          {/* Chat History (authenticated users) */}
           {user && (
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1 flex items-center gap-1.5">
@@ -414,7 +503,6 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Quick Prompts */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
               Quick Health Prompts
@@ -431,7 +519,6 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Sidebar footer - user info or sign in */}
         <div className="p-4 border-t border-border">
           {user ? (
             <div className="flex items-center justify-between">
@@ -491,7 +578,67 @@ export default function ChatPage() {
         {/* Input */}
         <div className="border-t border-border bg-card p-4">
           <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
+
+            {/* File attachment preview */}
+            {attachedFile && (
+              <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20">
+                {attachedFile.preview ? (
+                  <img src={attachedFile.preview} alt="Preview" className="h-12 w-12 rounded object-cover flex-shrink-0 border border-border" />
+                ) : (
+                  <div className="h-12 w-12 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                    <FileText className="h-6 w-6 text-primary" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">{attachedFile.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {attachedFile.type.startsWith("image/") ? "Image" : "PDF"} · Ready to analyze
+                  </p>
+                </div>
+                <button type="button" onClick={removeAttachment} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            {/* File error */}
+            {fileError && (
+              <div className="mb-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-xs text-destructive">
+                {fileError}
+              </div>
+            )}
+
             <div className="relative flex items-end gap-2 rounded-xl border border-border bg-input p-2">
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                onChange={handleFileSelect}
+                className="hidden"
+                id="file-upload"
+              />
+
+              {/* Attach button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading}
+                title="Attach image or report"
+                className={cn(
+                  "flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
+                  attachedFile
+                    ? "text-primary bg-primary/10 hover:bg-primary/20"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
+              >
+                {attachedFile?.type.startsWith("image/")
+                  ? <ImageIcon className="h-5 w-5" />
+                  : attachedFile
+                    ? <FileText className="h-5 w-5" />
+                    : <Paperclip className="h-5 w-5" />}
+              </button>
+
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -499,19 +646,19 @@ export default function ChatPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e) }
                 }}
-                placeholder="Describe your symptoms or ask a health question..."
+                placeholder={attachedFile ? "Ask about this report or image... (or just press send)" : "Describe your symptoms or ask a health question..."}
                 disabled={isLoading}
                 rows={1}
                 className="flex-1 resize-none bg-transparent border-0 focus:outline-none focus:ring-0 text-foreground placeholder:text-muted-foreground py-2 px-2 max-h-36"
               />
-              <Button type="submit" disabled={isLoading || !input.trim()} size="icon"
+              <Button type="submit" disabled={isLoading || (!input.trim() && !attachedFile)} size="icon"
                 className="h-10 w-10 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex-shrink-0">
                 <Send className="h-4 w-4" />
                 <span className="sr-only">Send message</span>
               </Button>
             </div>
             <p className="text-xs text-center text-muted-foreground mt-2">
-              Pluto may make mistakes. Always verify health information with a professional.
+              Attach images or PDF reports · Pluto may make mistakes · Always verify with a professional
             </p>
           </form>
         </div>

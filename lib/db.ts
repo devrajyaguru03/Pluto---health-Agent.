@@ -1,4 +1,4 @@
-import { createClient, type Client } from '@libsql/client';
+import { createClient, type Client, type InStatement, type InArgs } from '@libsql/client';
 
 let _db: Client | null = null;
 
@@ -16,18 +16,23 @@ export function getDb(): Client {
   return _db;
 }
 
-// Convenience shorthand — same API as before
+// Typed helper that mirrors the full overloaded Client.execute signature
 export const db = {
-  execute: (...args: Parameters<Client['execute']>) => getDb().execute(...args),
-  executeMultiple: (...args: Parameters<Client['executeMultiple']>) => getDb().executeMultiple(...args),
-  batch: (...args: Parameters<Client['batch']>) => getDb().batch(...args),
+  execute(stmt: InStatement): ReturnType<Client['execute']> {
+    return getDb().execute(stmt as any);
+  },
+  executeMultiple(sql: string): Promise<void> {
+    return getDb().executeMultiple(sql);
+  },
+  batch(stmts: InStatement[], mode?: 'write' | 'read' | 'deferred'): ReturnType<Client['batch']> {
+    return getDb().batch(stmts as any, mode);
+  },
 };
 
 // ─── Schema Init ────────────────────────────────────────────────
 
 export async function initDb() {
-  const client = getDb();
-  await client.executeMultiple(`
+  await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       name         TEXT    NOT NULL,
